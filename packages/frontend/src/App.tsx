@@ -1,13 +1,21 @@
-import { useState } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useMinesweeper } from './hooks/useMinesweeper';
+import { useGameTimer } from './hooks/useTimer';
+import { useSound } from './hooks/useSound';
 import { DifficultySelector } from './components/DifficultySelector';
 import { GameBoard } from './components/GameBoard';
 import { MCPStatus } from './components/MCPStatus';
-import { MCP_ENDPOINT } from './config';
+import { RetroWindow, RetroStatusBar } from './components/RetroWindow';
+import { SoundControl } from './components/SoundControl';
 import type { Difficulty } from '@minesweeper-mcp/shared';
+
+// ============================================
+// メインコンポーネント
+// ============================================
 
 /**
  * マインスイーパーアプリケーションのルートコンポーネント
+ * Windows 95 クラシックスタイル
  */
 export default function App() {
   const {
@@ -23,24 +31,84 @@ export default function App() {
   } = useMinesweeper();
 
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>(difficulty);
+  const [hasStarted, setHasStarted] = useState(false);
 
-  const handleStartGame = (diff: Difficulty) => {
+  // タイマー
+  const { time, resetTimer } = useGameTimer(gameStatus, hasStarted);
+
+  // 効果音
+  const { playSound, isEnabled: soundEnabled, setEnabled: setSoundEnabled } = useSound();
+
+  // ゲーム開始時の処理
+  const handleStartGame = useCallback((diff: Difficulty) => {
     setSelectedDifficulty(diff);
     startNewGame(diff);
-  };
+    resetTimer();
+    setHasStarted(false);
+    playSound('newGame');
+  }, [startNewGame, resetTimer, playSound]);
+
+  // 顔ボタンクリック時のリセット
+  const handleFaceClick = useCallback(() => {
+    resetGame();
+    resetTimer();
+    setHasStarted(false);
+    playSound('newGame');
+  }, [resetGame, resetTimer, playSound]);
+
+  // セルクリック時の処理
+  const handleRevealCell = useCallback(async (row: number, col: number) => {
+    if (!hasStarted) {
+      setHasStarted(true);
+    }
+    playSound('click');
+    const result = await revealCell(row, col);
+    
+    // 結果に応じて効果音を再生
+    if (result) {
+      if (gameStatus === 'lost') {
+        playSound('explode');
+      } else if (gameStatus === 'won') {
+        playSound('win');
+      } else {
+        playSound('reveal');
+      }
+    }
+    return result;
+  }, [hasStarted, revealCell, playSound, gameStatus]);
+
+  // フラグ切り替え時の処理
+  const handleToggleFlag = useCallback(async (row: number, col: number) => {
+    const cell = gameState?.board[row]?.[col];
+    if (cell?.state === 'flagged') {
+      playSound('unflag');
+    } else {
+      playSound('flag');
+    }
+    return toggleFlag(row, col);
+  }, [toggleFlag, playSound, gameState]);
+
+  // ゲーム状態変化時の効果音
+  useEffect(() => {
+    if (gameStatus === 'won') {
+      playSound('win');
+    } else if (gameStatus === 'lost') {
+      playSound('explode');
+    }
+  }, [gameStatus, playSound]);
 
   const isGameOver = gameStatus !== 'playing';
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-4xl mx-auto">
-        {/* ヘッダー */}
-        <Header isSpectatorMode={isSpectatorMode} isConnected={isConnected} />
-
+    <div className="min-h-screen bg-[#008080] p-4 flex items-center justify-center">
+      <RetroWindow 
+        title="マインスイーパー" 
+        icon="💣"
+      >
         {/* メインコンテンツ */}
-        <main className="space-y-6">
-          {/* 難易度選択（観戦モードでは非表示） */}
-          {!isSpectatorMode && (
+        <div className="p-2">
+          {/* 観戦モードでない場合は難易度選択を表示 */}
+          {!isSpectatorMode && !gameState && (
             <DifficultySelector
               currentDifficulty={selectedDifficulty}
               onSelectDifficulty={setSelectedDifficulty}
@@ -48,33 +116,69 @@ export default function App() {
             />
           )}
 
-          {/* ゲームオーバー時のボタン */}
-          {!isSpectatorMode && gameState && isGameOver && (
-            <GameOverActions
-              onRetry={resetGame}
-              onNewGame={() => handleStartGame(selectedDifficulty)}
+          {/* ゲームボード */}
+          {gameState && (
+            <GameBoard
+              gameState={gameState}
+              gameStatus={gameStatus}
+              time={time}
+              onRevealCell={isSpectatorMode ? async () => null : handleRevealCell}
+              onToggleFlag={isSpectatorMode ? async () => null : handleToggleFlag}
+              onNewGame={handleFaceClick}
             />
           )}
 
-          {/* ゲームボード */}
-          <GameBoard
-            gameState={gameState}
-            gameStatus={gameStatus}
-            onRevealCell={isSpectatorMode ? () => Promise.resolve(null) : revealCell}
-            onToggleFlag={isSpectatorMode ? () => Promise.resolve(null) : toggleFlag}
-          />
-
-          {/* 観戦モードメッセージ */}
-          {isSpectatorMode && (
-            <div className="text-center text-gray-500">
-              観戦モード - ゲームはリアルタイムで更新されます
+          {/* ゲームオーバー時のボタン（観戦モード以外） */}
+          {!isSpectatorMode && gameState && isGameOver && (
+            <div className="flex justify-center gap-2 mt-3">
+              <button
+                onClick={handleFaceClick}
+                className="win95-button px-3 py-1 text-[11px]"
+              >
+                リトライ
+              </button>
+              <button
+                onClick={() => handleStartGame(selectedDifficulty)}
+                className="win95-button px-3 py-1 text-[11px]"
+              >
+                新しいゲーム
+              </button>
             </div>
           )}
-        </main>
 
-        {/* フッター */}
-        <Footer />
-      </div>
+          {/* 難易度変更ボタン（ゲーム中） */}
+          {!isSpectatorMode && gameState && (
+            <div className="flex justify-center gap-2 mt-3">
+              <DifficultySelector
+                currentDifficulty={selectedDifficulty}
+                onSelectDifficulty={setSelectedDifficulty}
+                onStartGame={handleStartGame}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* ステータスバー */}
+        <RetroStatusBar>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <MCPStatus isConnected={isConnected} />
+              {isSpectatorMode && (
+                <span className="text-[10px] text-blue-700">観戦モード</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <SoundControl 
+                isEnabled={soundEnabled} 
+                onToggle={setSoundEnabled} 
+              />
+            </div>
+          </div>
+        </RetroStatusBar>
+      </RetroWindow>
+
+      {/* フッター情報 */}
+      <Footer />
     </div>
   );
 }
@@ -83,69 +187,11 @@ export default function App() {
 // サブコンポーネント
 // ============================================
 
-interface HeaderProps {
-  isSpectatorMode: boolean;
-  isConnected: boolean;
-}
-
-function Header({ isSpectatorMode, isConnected }: HeaderProps) {
-  return (
-    <header className="flex items-center justify-between mb-8">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">
-          マインスイーパー
-          {isSpectatorMode && (
-            <span className="ml-2 text-lg font-normal text-blue-600">
-              (観戦モード)
-            </span>
-          )}
-        </h1>
-        <p className="text-gray-600">MCP対応のマインスイーパーゲーム</p>
-      </div>
-      <MCPStatus isConnected={isConnected} />
-    </header>
-  );
-}
-
-interface GameOverActionsProps {
-  onRetry: () => void;
-  onNewGame: () => void;
-}
-
-function GameOverActions({ onRetry, onNewGame }: GameOverActionsProps) {
-  return (
-    <div className="flex justify-center gap-4">
-      <button
-        onClick={onRetry}
-        className="px-6 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition-colors"
-      >
-        リトライ
-      </button>
-      <button
-        onClick={onNewGame}
-        className="px-6 py-2 bg-gray-600 text-white rounded font-medium hover:bg-gray-700 transition-colors"
-      >
-        新しいゲーム
-      </button>
-    </div>
-  );
-}
-
 function Footer() {
   return (
-    <footer className="mt-8 text-center text-sm text-gray-600">
+    <div className="fixed bottom-2 left-1/2 transform -translate-x-1/2 text-white/60 text-[10px] text-center">
       <p>左クリック: セルを開く | 右クリック: フラグを立てる</p>
-      <p className="mt-2">
-        MCPサーバー:
-        <a
-          href={MCP_ENDPOINT}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:underline ml-1"
-        >
-          {MCP_ENDPOINT}
-        </a>
-      </p>
-    </footer>
+      <p className="mt-1">MCP対応マインスイーパー</p>
+    </div>
   );
 }
