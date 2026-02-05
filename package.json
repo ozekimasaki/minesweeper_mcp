@@ -1,0 +1,25 @@
+{
+  "name": "minesweeper-mcp",
+  "version": "1.0.0",
+  "description": "Minesweeper game with MCP server integration",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:mcp\" \"npm run dev:frontend\"",
+    "dev:mcp": "cd packages/mcp-server && tsx src/index.ts",
+    "dev:frontend": "cd packages/frontend && vite",
+    "build": "npm run build:shared && npm run build:mcp-server && npm run build:frontend",
+    "build:shared": "cd packages/shared && tsc",
+    "build:mcp-server": "cd packages/mcp-server && tsc",
+    "build:frontend": "cd packages/frontend && vite build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
